@@ -66,6 +66,13 @@
 #include "quicdoq.h"
 #include "picosocks.h"
 #include "autoqlog.h"
+#include "quicdoq_internal.h"
+#include "picotls.h"
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+
 
 #if 0
 #ifndef SOCKET_TYPE
@@ -113,11 +120,13 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
     const char* sni, const char* alpn, const char* root_crt,
     int mtu_max, const char* log_file, char const* binlog_dir, char const* qlog_dir, int use_long_log,
     int client_cnx_id_length, char const* cc_algo_id,
-    int nb_client_queries, char const** client_query_text);
+    int nb_client_queries, char const** client_query_text, struct sockaddr_storage* client_ip);
 int quicdoq_demo_client_init_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx, int nb_client_queries, char const** client_query_text,
     char const* server_name, struct sockaddr* server_addr, struct sockaddr* client_addr, uint64_t current_time);
 void quicdoq_demo_client_reset_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx);
 int quicdoq_demo_client_cb(quicdoq_query_return_enum callback_code, void* callback_ctx, quicdoq_query_ctx_t* query_ctx, uint64_t current_time);
+char* get_addr();
+void print_addr(struct sockaddr* address, char* label);
 
 int main(int argc, char** argv)
 {
@@ -269,7 +278,7 @@ int main(int argc, char** argv)
 
         ret = quicdoq_client(server_name, server_port, dest_if, sni, alpn, root_trust_file,
             mtu_max, log_file, binlog_dir, qlog_dir, use_long_log, client_cnx_id_length, cc_algo_id,
-            nb_client_queries, client_query_text);
+            nb_client_queries, client_query_text,NULL);
     }
     else {
         /* start server using specified options */
@@ -528,6 +537,55 @@ int quicdoq_demo_server(
                 if (picoquic_compare_addr((struct sockaddr*) & addr_from, (struct sockaddr*) & udp_addr) == 0) {
                     /* This is a packet from the UDP server. Send it there */
                     quicdoq_udp_incoming_packet(udp_ctx, buffer, (uint32_t)bytes_recv, (struct sockaddr*) & addr_to, if_index_to, current_time);
+					print_addr((struct sockaddr*) &addr_from, "BRAUN");
+					print_addr((struct sockaddr*) &addr_to, "APPLE");
+					//struct sockaddr* client_ip = (struct sockaddr*) &addr_to;
+    				//memset(client_ip, 0, sizeof(struct sockaddr_storage));
+					//memcpy(&client_ip,&addr_to,sizeof(addr_to));
+
+					/////////////////////////////////////////////////////////////////
+					/////////////////////////////////////////////////////////////////
+					const char* server_name = NULL;
+    				//const char* server_cert_file = NULL;
+    				//const char* server_key_file = NULL;
+    				const char* log_file = NULL;
+    				const char* binlog_dir = NULL;
+    				const char* qlog_dir = NULL;
+    				const char* sni = NULL;
+    				const char* alpn = NULL;
+    				const char* root_trust_file = NULL;
+    				//const char* backend_dns_server = NULL;
+    				//const char* solution_dir = NULL;
+    				const char* cc_algo_id = NULL;
+
+    				int use_long_log = 0;
+    				int server_port = QUICDOQ_PORT;
+    				int dest_if = -1;
+    				int mtu_max = 0;
+    				//int do_retry = 0;
+    				//uint64_t* reset_seed = NULL;
+    				//uint64_t reset_seed_x[2];
+    				//uint32_t proposed_version = 0;
+    				int client_cnx_id_length = 8;
+    				const char** client_query_text = NULL;
+    				const char* default_query = "example.com:A";
+    				const char* default_query_query_list[2]; 
+    				int nb_client_queries = 0;
+
+    				default_query_query_list[0] = default_query;
+    				default_query_query_list[1] = NULL;
+    				client_query_text = default_query_query_list;
+    				nb_client_queries = 1;
+
+					server_name = "192.168.0.118";
+					server_port = 8000;
+
+					quicdoq_client(server_name, server_port, dest_if, sni, alpn, root_trust_file,
+    				        mtu_max, log_file, binlog_dir, qlog_dir, use_long_log, client_cnx_id_length, cc_algo_id,
+    				        nb_client_queries, client_query_text, &addr_to);
+					/////////////////////////////////////////////////////////////////
+					/////////////////////////////////////////////////////////////////
+
                 }
                 else {
                     /* Submit the packet to the Quic server */
@@ -550,11 +608,20 @@ int quicdoq_demo_server(
                 send_length = 0;
 
                 if (quicdoq_next_udp_time(udp_ctx) <= current_time) {
+					//if(start_send==0) {
+					//	fprintf(stdout, "START TRANSMISSION!");
+					//	start_send=1;
+					//}
                     /* check whether there is something to send */
                     quicdoq_udp_prepare_next_packet(udp_ctx, loop_time,
                         send_buffer, sizeof(send_buffer), &send_length,
                         &peer_addr, &local_addr, &if_index);
-                }
+                //} else {
+				//	if(start_send==1) {
+				//		start_send=0;
+				//		fprintf(stdout, "END TRANSMISSION!");
+				//	}
+				}
 
                 if (send_length == 0 && picoquic_get_next_wake_time(quicdoq_get_quic_ctx(qd_server), current_time) <= current_time) {
                     ret = picoquic_prepare_next_packet(quicdoq_get_quic_ctx(qd_server), loop_time,
@@ -616,7 +683,7 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
     const char* sni, const char* alpn, const char* root_crt,
     int mtu_max, const char* log_file, char const* binlog_dir, char const* qlog_dir, int use_long_log,
     int client_cnx_id_length, char const* cc_algo_id,
-    int nb_client_queries, char const** client_query_text)
+    int nb_client_queries, char const** client_query_text, struct sockaddr_storage* client_ip)
 {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
@@ -658,6 +725,32 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
     if (sni == NULL && is_name != 0) {
         sni = server_name;
     }
+
+    if (client_ip == NULL) {
+		// jungyoon : Unfortunately, client_address is always NULL in this implementation
+		// 			  Thus, we will provide initial ip address automatically
+		// STEP A : GET SYSTEM IP ADDRESS
+		char ip_address[15];
+		strcpy(ip_address,get_addr());
+
+		// STEP B : FILL sockaddr_storage
+		int client_port = 8000;
+		int is_name2 = 0;
+    	ret = picoquic_get_server_address(ip_address, client_port, &client_address, &is_name2);
+    	//if (sni == NULL && is_name2 != 0) {
+    	//    sni = server_name;
+    	//}
+		fprintf(stdout, "PROVIDED SYSTEM IP AS A CLIENT ADDR\n");
+		print_addr((struct sockaddr*) & server_address, "DEBUG SERVER");
+		print_addr((struct sockaddr*) & client_address, "DEBUG CLIENT");
+	} else {
+		// jungyoon : FILL THE IP ADDR FROM THE ORIGINAL CLIENT TO THE client_address
+		memcpy(&client_address,(struct sockaddr*)client_ip,sizeof(client_address));
+	
+		fprintf(stdout, "FILLED CLIENT IP AS A CLIENT ADDR\n");
+		print_addr((struct sockaddr*) & server_address, "DEBUG SERVER");
+		print_addr((struct sockaddr*) & client_address, "DEBUG CLIENT");
+	}
 
     /* Open a UDP socket */
 
@@ -704,12 +797,26 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
         }
     }
 
+    //if (cctx != 0) {
+	//	// jungyoon : Overwrite the original ptls_context_t to the Client's ptls_context_t
+	//	ptls_context_t* ctx = (ptls_context_t*)qd_client->quic->tls_master_ctx;
+	//	memcpy(&ctx,&cctx,sizeof(ctx));
+	//}
+
     /* Init the client context */
     if (ret == 0) {
         ret = quicdoq_demo_client_init_context(qd_client, &client_ctx, nb_client_queries, client_query_text,
             sni, (struct sockaddr*) & server_address, (struct sockaddr*) & client_address, current_time);
 
     }
+
+    for (int i = 0; ret == 0 && i < nb_client_queries; i++) {
+        //client_ctx->query_ctx[i]->server_name = server_name; 
+        struct sockaddr* server = client_ctx.query_ctx[i]->server_addr;
+        struct sockaddr* client = client_ctx.query_ctx[i]->client_addr;
+        print_addr(server, "DEBUG");
+		print_addr(client, "DEBUG"); 
+	}
 
     /* Loop: wait for packets, send queries, until all queries served */
     while (ret == 0 && !(client_ctx.all_queries_served && quicdoq_is_closed(qd_client))) {
@@ -890,6 +997,7 @@ int quicdoq_demo_client_init_context(quicdoq_ctx_t* qd_client, quicdoq_demo_clie
                 client_ctx->query_ctx[i]->query_id = (uint16_t)i;
                 client_ctx->query_ctx[i]->client_cb = quicdoq_demo_client_cb;
                 client_ctx->query_ctx[i]->client_cb_ctx = client_ctx;
+				strcpy(client_ctx->query_ctx[i]->ipstr,get_addr());
                 ret = quicdoq_demo_client_init_query(client_ctx->query_ctx[i], client_query_text[i]);
             }
         }
@@ -987,4 +1095,45 @@ int quicdoq_demo_client_cb(
     }
 
     return ret;
+}
+
+// jungyoon : get current system's IP address
+// FIXME : enp6s0 or eth0 is provided manually... automate this later
+char* get_addr()
+{
+	static char ip_address[15];
+    int fd;
+    struct ifreq ifr;
+
+    /*AF_INET - to define network interface IPv4*/
+    /*Creating soket for it.*/
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    /*AF_INET - to define IPv4 Address type.*/
+    ifr.ifr_addr.sa_family = AF_INET;
+
+    /*eth0 - define the ifr_name - port name
+    where network attached.*/
+    memcpy(ifr.ifr_name, "enp6s0", IFNAMSIZ - 1);
+    //memcpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+
+    /*Accessing network interface information by
+    passing address using ioctl.*/
+    ioctl(fd, SIOCGIFADDR, &ifr);
+    /*closing fd*/
+    close(fd);
+
+    /*Extract IP Address*/
+    strcpy(ip_address, inet_ntoa(((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr));
+
+    printf("System IP Address is: %s\n", ip_address);	
+	return ip_address;
+}
+
+// jungyoon : from picoquic/picoquicfirst/picoquicdemo.c
+void print_addr(struct sockaddr* address, char* label)
+{
+	char hostname[256];
+	const char* x = inet_ntop(address->sa_family, (address->sa_family == AF_INET) ? (void*)&(((struct sockaddr_in*)address)->sin_addr) : (void*)&(((struct sockaddr_in6*)address)->sin6_addr),hostname, sizeof(hostname));
+	fprintf(stdout, "%s : %s\n", label, x);
 }
