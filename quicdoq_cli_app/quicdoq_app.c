@@ -66,9 +66,6 @@
 #include "quicdoq.h"
 #include "picosocks.h"
 #include "autoqlog.h"
-#include "quicdoq_internal.h"
-#include "picotls.h"
-
 
 #if 0
 #ifndef SOCKET_TYPE
@@ -116,15 +113,11 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
     const char* sni, const char* alpn, const char* root_crt,
     int mtu_max, const char* log_file, char const* binlog_dir, char const* qlog_dir, int use_long_log,
     int client_cnx_id_length, char const* cc_algo_id,
-    int nb_client_queries, char const** client_query_text, ptls_context_t* cctx);
-    //int nb_client_queries, char const** client_query_text, picoquic_quic_t* qquic);
-    //int nb_client_queries, char const** client_query_text, quicdoq_ctx_t* qq_client);
-    //int nb_client_queries, char const** client_query_text);
+    int nb_client_queries, char const** client_query_text);
 int quicdoq_demo_client_init_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx, int nb_client_queries, char const** client_query_text,
     char const* server_name, struct sockaddr* server_addr, struct sockaddr* client_addr, uint64_t current_time);
 void quicdoq_demo_client_reset_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx);
 int quicdoq_demo_client_cb(quicdoq_query_return_enum callback_code, void* callback_ctx, quicdoq_query_ctx_t* query_ctx, uint64_t current_time);
-int quicdoq_demo_server_cb();
 
 int main(int argc, char** argv)
 {
@@ -276,7 +269,7 @@ int main(int argc, char** argv)
 
         ret = quicdoq_client(server_name, server_port, dest_if, sni, alpn, root_trust_file,
             mtu_max, log_file, binlog_dir, qlog_dir, use_long_log, client_cnx_id_length, cc_algo_id,
-            nb_client_queries, client_query_text,NULL);
+            nb_client_queries, client_query_text);
     }
     else {
         /* start server using specified options */
@@ -445,8 +438,7 @@ int quicdoq_demo_server(
     if (ret == 0) {
         /* Create a Quic Doq context for the server */
         qd_server = quicdoq_create(alpn, server_cert_file, server_key_file, NULL, NULL, NULL,
-            quicdoq_demo_server_cb, NULL, NULL);
-            //quicdoq_udp_callback, NULL, NULL);
+            quicdoq_udp_callback, NULL, NULL);
         if (qd_server == NULL) {
             ret = -1;
         }
@@ -456,8 +448,7 @@ int quicdoq_demo_server(
                 ret = -1;
             }
             else {
-                quicdoq_set_callback(qd_server, quicdoq_demo_server_cb, udp_ctx);
-                //quicdoq_set_callback(qd_server, quicdoq_udp_callback, udp_ctx);
+                quicdoq_set_callback(qd_server, quicdoq_udp_callback, udp_ctx);
             }
         }
     }
@@ -547,12 +538,6 @@ int quicdoq_demo_server(
                 }
             }
 
-			//if (quicdoq_is_closed(qd_server)) {
-			//	fprintf(stdout, "HELLO WORLD!");
-			//}
-
-			//int start_send = 0;
-
             do {
                 struct sockaddr_storage peer_addr;
                 struct sockaddr_storage local_addr;
@@ -565,20 +550,11 @@ int quicdoq_demo_server(
                 send_length = 0;
 
                 if (quicdoq_next_udp_time(udp_ctx) <= current_time) {
-					//if(start_send==0) {
-					//	fprintf(stdout, "START TRANSMISSION!");
-					//	start_send=1;
-					//}
                     /* check whether there is something to send */
                     quicdoq_udp_prepare_next_packet(udp_ctx, loop_time,
                         send_buffer, sizeof(send_buffer), &send_length,
                         &peer_addr, &local_addr, &if_index);
-                //} else {
-				//	if(start_send==1) {
-				//		start_send=0;
-				//		fprintf(stdout, "END TRANSMISSION!");
-				//	}
-				}
+                }
 
                 if (send_length == 0 && picoquic_get_next_wake_time(quicdoq_get_quic_ctx(qd_server), current_time) <= current_time) {
                     ret = picoquic_prepare_next_packet(quicdoq_get_quic_ctx(qd_server), loop_time,
@@ -640,9 +616,7 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
     const char* sni, const char* alpn, const char* root_crt,
     int mtu_max, const char* log_file, char const* binlog_dir, char const* qlog_dir, int use_long_log,
     int client_cnx_id_length, char const* cc_algo_id,
-    int nb_client_queries, char const** client_query_text, ptls_context_t* cctx)
-    //int nb_client_queries, char const** client_query_text, picoquic_quic_t* qquic)
-    //int nb_client_queries, char const** client_query_text, quicdoq_ctx_t* qq_client)
+    int nb_client_queries, char const** client_query_text)
 {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
@@ -729,16 +703,6 @@ int quicdoq_client(const char* server_name, int server_port, int dest_if,
             picoquic_set_key_log_file_from_env(qclient);
         }
     }
-
-	fprintf(stdout, "^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
-    if (cctx != NULL) {
-		size_t ccount = cctx->certificates.count;
-		fprintf(stdout, "%lu\n", ccount);
-        //qd_client->quic->tls_master_ctx = (ptls_context_t*)cctx;
-        //	//qd_client->quic = (picoquic_quic_t*)qquic;
-		//	fprintf(stdout, "^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
-    }
-
 
     /* Init the client context */
     if (ret == 0) {
@@ -1023,115 +987,4 @@ int quicdoq_demo_client_cb(
     }
 
     return ret;
-}
-
-int quicdoq_demo_server_cb(
-    quicdoq_query_return_enum callback_code,
-    void* callback_ctx,
-    quicdoq_query_ctx_t* query_ctx,
-    uint64_t current_time)
-{
-	fprintf(stdout, "HELLO WORLD!\n");
-
-    //switch (callback_code) {
-    //    case quicdoq_response_complete:
-	//		fprintf(stdout, "quicdoq_response_complete\n");
-	//		break;
-    //    case quicdoq_query_cancelled:
-	//		fprintf(stdout, "quicdoq_query_cancelled\n");
-	//		break;
-    //    case quicdoq_response_partial:
-	//		fprintf(stdout, "quicdoq_response_partial\n");
-	//		break;
-    //    case quicdoq_response_cancelled:
-	//		fprintf(stdout, "quicdoq_response_cancelled\n");
-	//		break;
-    //    case quicdoq_query_failed:
-	//		fprintf(stdout, "quicdoq_query_failed\n");
-	//		break;
-	//	default:
-	//		fprintf(stdout, "default\n");
-	//		break;
-	//}
-
-	////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////
-
-    uint16_t qid = (uint16_t) query_ctx->query_id;
-    quicdoq_demo_client_ctx_t* client_ctx = (quicdoq_demo_client_ctx_t*)callback_ctx;
-	quicdoq_ctx_t* qq_client = (quicdoq_ctx_t*)client_ctx->qd_client;
-    picoquic_quic_t* qquic = (picoquic_quic_t*)qq_client->quic;
-	ptls_context_t* cctx = (ptls_context_t*)qquic->tls_master_ctx;
-
-	fprintf(stdout, "Query #%d doomdoom.\n", qid);
-
-    if (qid > client_ctx->nb_client_queries) {
-    	fprintf(stdout, "dumdum\n");
-    }
-    else {
-        fprintf(stdout, "Query #%d completes after  with code %d\n",
-            qid, callback_code);
-    }
-	size_t ccount = cctx->certificates.count;
-	fprintf(stdout, "%lu\n", ccount);
-
-	//	//ptls_iovec_t* llist = cctx->certificates.list;
-	//	//size_t ccount = cctx->certificates.count;
-	//	//
-	//	//for(int i=0;i<ccount;i++) {
-	//	//	//uint8_t* bbase = llist[i].base;
-	//	//	size_t llen = llist[i].len;
-	//	//	fprintf(stdout, "%lu\n", llen);
-	//	//}
-	//	fprintf(stdout, "#######################\n");
-
-
-	//ptls_context_t* ctx = (ptls_context_t*)client_ctx->qd_server->quic->tls_master_ctx;
-    //uint16_t qid = (uint16_t) query_ctx->query_id;
-
-	////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////
-
-    const char* server_name = NULL;
-    //const char* server_cert_file = NULL;
-    //const char* server_key_file = NULL;
-    const char* log_file = NULL;
-    const char* binlog_dir = NULL;
-    const char* qlog_dir = NULL;
-    const char* sni = NULL;
-    const char* alpn = NULL;
-    const char* root_trust_file = NULL;
-    //const char* backend_dns_server = NULL;
-    //const char* solution_dir = NULL;
-    const char* cc_algo_id = NULL;
-
-    int use_long_log = 0;
-    int server_port = QUICDOQ_PORT;
-    int dest_if = -1;
-    int mtu_max = 0;
-    //int do_retry = 0;
-    //uint64_t* reset_seed = NULL;
-    //uint64_t reset_seed_x[2];
-    //uint32_t proposed_version = 0;
-    int client_cnx_id_length = 8;
-    const char** client_query_text = NULL;
-    const char* default_query = "example.com:A";
-    const char* default_query_query_list[2]; 
-    int nb_client_queries = 0;
-
-    default_query_query_list[0] = default_query;
-    default_query_query_list[1] = NULL;
-    client_query_text = default_query_query_list;
-    nb_client_queries = 1;
-
-	server_name = "192.168.0.118";
-	server_port = 8000;
-
-	int tmp = quicdoq_client(server_name, server_port, dest_if, sni, alpn, root_trust_file,
-            mtu_max, log_file, binlog_dir, qlog_dir, use_long_log, client_cnx_id_length, cc_algo_id,
-            nb_client_queries, client_query_text, cctx);
-            //nb_client_queries, client_query_text, NULL);
-	int ret = tmp;
-	ret = quicdoq_udp_callback(callback_code,callback_ctx,query_ctx,current_time);
-	return ret;
 }
