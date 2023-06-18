@@ -19,6 +19,7 @@
 * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#define QUICDOQ_DEMO_CLIENT_MAX_RECEIVE_BATCH 16
 
 #ifdef _WINDOWS
 #define WIN32_LEAN_AND_MEAN
@@ -112,13 +113,15 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                               int server_port, int dest_if, int mtu_max,
                               int do_retry, uint64_t *reset_seed,
                               char const *cc_algo_id);
-int quicdoq_linear_doq_server(const char *alpn, const char *server_cert_file,
-                              const char *server_key_file, const char *log_file,
-                              const char *binlog_dir, char const *qlog_dir,
-                              const char *backend_dns_server,
+int quicdoq_linear_doq_server(const char *server_name, int server_port,
+                              int local_server_port, int dest_if,
+                              const char *sni, const char *alpn,
+                              const char *server_cert_file,
+                              const char *server_key_file, const char *root_crt,
+                              int mtu_max, const char *log_file,
+                              char const *binlog_dir, char const *qlog_dir,
                               const char *solution_dir, int use_long_log,
-                              int server_port, int dest_if, int mtu_max,
-                              int do_retry, uint64_t *reset_seed,
+                              int client_cnx_id_length, int do_retry,
                               char const *cc_algo_id);
 int quicdoq_client(const char *server_name, int server_port,
                    int local_server_port, int dest_if, const char *sni,
@@ -132,6 +135,7 @@ int quicdoq_client(const char *server_name, int server_port,
 int quicdoq_demo_client_init_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx, int nb_client_queries, char const** client_query_text,
     char const* server_name, struct sockaddr* server_addr, struct sockaddr* client_addr, uint64_t current_time);
 void quicdoq_demo_client_reset_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx);
+int quicdoq_stub_cb(quicdoq_query_return_enum callback_code, void *callback_ctx, quicdoq_query_ctx_t *query_ctx, uint64_t current_time);
 int quicdoq_demo_client_cb(quicdoq_query_return_enum callback_code, void* callback_ctx, quicdoq_query_ctx_t* query_ctx, uint64_t current_time);
 
 enum QUICDOQ_ROLE {
@@ -139,6 +143,7 @@ enum QUICDOQ_ROLE {
     QUICDOQ_ROLE_DOQ,
     QUICDOQ_ROLE_DOQ_TO_UDP
 };
+#define QUICDOQ_LINEAR_DEFAULT_PORT 17777
 int main(int argc, char** argv)
 {
     int ret = 0;
@@ -169,6 +174,7 @@ int main(int argc, char** argv)
     const char* default_query_query_list[2]; 
     int nb_client_queries = 0;
     int role = -1;
+    int local_server_port = QUICDOQ_LINEAR_DEFAULT_PORT;
 
 #ifdef _WINDOWS
     WSADATA wsaData = { 0 };
@@ -177,7 +183,7 @@ int main(int argc, char** argv)
 
     /* Get the parameters */
     int opt;
-    while ((opt = getopt(argc, argv, "CQUc:k:K:E:l:b:q:Lp:e:m:n:a:rs:t:v:I:G:S:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "CQUP:c:k:K:E:l:b:q:Lp:e:m:n:a:rs:t:v:I:G:S:d:h")) != -1) {
         switch (opt) {
         case 'C':
             if(role != -1) {
@@ -196,6 +202,9 @@ int main(int argc, char** argv)
                 fprintf(stderr, "Parse error! (multiple roles assigned)\n");
             }
             role = QUICDOQ_ROLE_DOQ_TO_UDP;
+            break;
+        case 'P':
+            local_server_port = atoi(optarg);
             break;
         case 'c':
             server_cert_file = optarg;
@@ -311,7 +320,6 @@ int main(int argc, char** argv)
             nb_client_queries = 1;
         }
 
-        int local_server_port = 17777;
         ret = quicdoq_client(server_name, server_port, local_server_port,
                              dest_if, sni, alpn, server_cert_file,
                              server_key_file, root_trust_file, mtu_max,
@@ -319,10 +327,32 @@ int main(int argc, char** argv)
                              use_long_log, client_cnx_id_length, do_retry,
                              cc_algo_id, nb_client_queries, client_query_text);
     } else if (role == QUICDOQ_ROLE_DOQ) {
+        /* Start client using specified options */
+        server_name = argv[optind++];
+
+        if (optind < argc) {
+            if ((server_port = atoi(argv[optind++])) <= 0) {
+                fprintf(stderr, "Invalid port: %s\n", optarg);
+                usage();
+            }
+        }
+
+        if (optind < argc) {
+            client_query_text = (const char **)(argv + optind);
+            nb_client_queries = argc - optind;
+        }
+        else {
+            default_query_query_list[0] = default_query;
+            default_query_query_list[1] = NULL;
+            client_query_text = default_query_query_list;
+            nb_client_queries = 1;
+        }
+        
         ret = quicdoq_linear_doq_server(
-            alpn, server_cert_file, server_key_file, log_file, binlog_dir,
-            qlog_dir, backend_dns_server, solution_dir, use_long_log,
-            server_port, dest_if, mtu_max, do_retry, reset_seed, cc_algo_id);
+            server_name, server_port, local_server_port, dest_if, sni, alpn,
+            server_cert_file, server_key_file, root_trust_file, mtu_max,
+            log_file, binlog_dir, qlog_dir, solution_dir, use_long_log,
+            client_cnx_id_length, do_retry, cc_algo_id);
     } else if (role == QUICDOQ_ROLE_DOQ_TO_UDP) {
         ret = quicdoq_doq_to_udp_server(
             alpn, server_cert_file, server_key_file, log_file, binlog_dir,
@@ -411,13 +441,10 @@ uint32_t parse_target_version(char const* v_arg)
     return v;
 }
 
-/* 
- * Simple QUIC-to-UDP DNS server.
+/* Simple QUIC-to-UDP DNS server
  *
  * The server assumes that the DNS queries will be served by a backend UDP server.
  * By default, the address of that server is set to "1.1.1.1" (the Cloudflare service).
- *
- * 
  */
 int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                               const char *server_key_file, const char *log_file,
@@ -458,7 +485,6 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
 #endif
     }
 
-
     if (backend_dns_server == NULL) {
         backend_dns_server = "1.1.1.1";
     }
@@ -541,7 +567,6 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
         ret = picoquic_open_server_sockets(&server_sockets, server_port);
     }
 
-
     while (ret == 0) {
         /* do the server loop */
         unsigned char received_ecn;
@@ -582,7 +607,6 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                 if (picoquic_compare_addr((struct sockaddr*) & addr_from, (struct sockaddr*) & udp_addr) == 0) {
                     /* This is a packet from the UDP server. Send it there */
                     quicdoq_udp_incoming_packet(udp_ctx, buffer, (uint32_t)bytes_recv, (struct sockaddr*) & addr_to, if_index_to, current_time);
-                    fprintf(stderr, "bytes_recv for quicdoq_udp_incoming_packet() = %d\n", bytes_recv);
                 }
                 else {
                     /* Submit the packet to the Quic server */
@@ -590,7 +614,7 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                         (size_t)bytes_recv, (struct sockaddr*) & addr_from,
                         (struct sockaddr*) & addr_to, if_index_to, received_ecn,
                         current_time);
-                    fprintf(stderr, "bytes_recv for picoquic_incoming_packet() = %d\n", bytes_recv);
+                    fprintf(stderr, "bytes_recv = %d\n", bytes_recv);
                 }
             }
 
@@ -616,6 +640,7 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                     ret = picoquic_prepare_next_packet(quicdoq_get_quic_ctx(qd_server), loop_time,
                         send_buffer, sizeof(send_buffer), &send_length,
                         &peer_addr, &local_addr, &if_index, &log_cid, &last_cnx);
+                    fprintf(stderr, "send_length = %lu\n", send_length);
                 }
 
                 if (ret == 0 && send_length > 0) {
@@ -623,6 +648,7 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
                     int sock_ret = picoquic_send_through_server_sockets(&server_sockets,
                         (struct sockaddr*) & peer_addr,(struct sockaddr*) & local_addr, if_index,
                         (const char*)send_buffer, (int)send_length, &sock_err);
+
                     if (sock_ret <= 0) {
                         if (last_cnx == NULL) {
                             picoquic_log_context_free_app_message(quicdoq_get_quic_ctx(qd_server), &log_cid, "Could not send message to AF_to=%d, AF_from=%d, if=%d, ret=%d, err=%d",
@@ -665,30 +691,50 @@ int quicdoq_doq_to_udp_server(const char *alpn, const char *server_cert_file,
     return ret;
 }
 
-/* 
- * Simple linear DoQ server.
+/* Simple linear DoQ server
  *
- * 
+ * This simply passthrough whatever packet it gets.
  */
-int quicdoq_linear_doq_server(
-    const char* alpn, const char* server_cert_file, const char* server_key_file, const char* log_file,
-    const char* binlog_dir, char const* qlog_dir, const char* backend_dns_server, const char* solution_dir,
-    int use_long_log, int server_port, int dest_if, int mtu_max, int do_retry,
-    uint64_t* reset_seed, char const * cc_algo_id)
+int quicdoq_linear_doq_server(const char *server_name, int server_port,
+                              int local_server_port, int dest_if,
+                              const char *sni, const char *alpn,
+                              const char *server_cert_file,
+                              const char *server_key_file, const char *root_crt,
+                              int mtu_max, const char *log_file,
+                              char const *binlog_dir, char const *qlog_dir,
+                              const char *solution_dir, int use_long_log,
+                              int client_cnx_id_length, int do_retry,
+                              char const *cc_algo_id)
 {
-    int ret = 0;
     char default_server_cert_file[512];
     char default_server_key_file[512];
-    quicdoq_ctx_t * qd_server = NULL;
-    quicdoq_udp_ctx_t * udp_ctx = NULL;
-    struct sockaddr_storage udp_addr;
+    quicdoq_ctx_t *qd_server = NULL;
     picoquic_server_sockets_t server_sockets;
-    struct sockaddr_storage addr_from;
-    struct sockaddr_storage addr_to;
+
+    /* Start: start the QUIC process with cert and key files */
+    int ret = 0;
+    quicdoq_ctx_t* qd_client = NULL;
+    picoquic_quic_t *qclient = NULL;
+    SOCKET_TYPE fd = INVALID_SOCKET;
+    struct sockaddr_storage server_address;
+    struct sockaddr_storage client_address;
+    struct sockaddr_storage packet_from;
+    struct sockaddr_storage packet_to;
     int if_index_to;
-    uint8_t buffer[PICOQUIC_MAX_PACKET_SIZE];
-    uint8_t send_buffer[PICOQUIC_MAX_PACKET_SIZE];
-    FILE* F_log = NULL;
+    int is_name;
+    uint8_t recv_buffer[PICOQUIC_MAX_PACKET_SIZE];
+    size_t send_length = 0;
+    int bytes_recv;
+    ssize_t bytes_sent;
+    uint64_t current_time = 0;
+    uint64_t time_out = 0;
+    int64_t delay_max = 10000000;
+    FILE *F_log = NULL;
+    quicdoq_demo_client_ctx_t client_ctx;
+    char const *ticket_file = "quicdoq_client_tickets.bin";
+    char const *token_file = "quicdoq_client_tokens.bin";
+
+    /* Setup server */
 
 #ifdef _WINDOWS
     UNREFERENCED_PARAMETER(reset_seed);
@@ -706,13 +752,6 @@ int quicdoq_linear_doq_server(
 #endif
     }
 
-
-    if (backend_dns_server == NULL) {
-        backend_dns_server = "1.1.1.1";
-    }
-
-    printf("Starting the quicdoq server on port %d, back end UDP server %s\n", server_port, backend_dns_server);
-
     /* Verify that the cert and key are defined. */
     if (server_cert_file == NULL &&
         (ret = picoquic_get_input_path(default_server_cert_file, sizeof(default_server_cert_file),
@@ -726,32 +765,13 @@ int quicdoq_linear_doq_server(
         server_key_file = default_server_key_file;
     }
 
-    /* Verify that the UDP server address is available */
-    if (ret == 0) {
-        int is_name = 0;
-
-        ret = picoquic_get_server_address(backend_dns_server, 53, &udp_addr, &is_name);
-        if (ret != 0) {
-            printf("Cannot parse the backend dns server name: %s\n", backend_dns_server);
-        }
-    }
-
     /* Create the server context */
     if (ret == 0) {
         /* Create a Quic Doq context for the server */
         qd_server = quicdoq_create(alpn, server_cert_file, server_key_file, NULL, NULL, NULL,
-            quicdoq_udp_callback, NULL, NULL);
+            quicdoq_stub_cb, NULL, NULL);
         if (qd_server == NULL) {
             ret = -1;
-        }
-        else {
-            udp_ctx = quicdoq_create_udp_ctx(qd_server, (struct sockaddr*) & udp_addr);
-            if (udp_ctx == NULL) {
-                ret = -1;
-            }
-            else {
-                quicdoq_set_callback(qd_server, quicdoq_udp_callback, udp_ctx);
-            }
         }
     }
 
@@ -786,21 +806,79 @@ int quicdoq_linear_doq_server(
 
     if (ret == 0) {
         /* start the local sockets */
-        ret = picoquic_open_server_sockets(&server_sockets, server_port);
+        ret = picoquic_open_server_sockets(&server_sockets, local_server_port);
     }
 
+    /* Setup client */
+
+#ifdef _WINDOWS
+    UNREFERENCED_PARAMETER(dest_if);
+#endif
+
+    current_time = picoquic_current_time();
+    time_out = current_time + 60000000;
+    memset(&client_ctx, 0, sizeof(quicdoq_demo_client_ctx_t));
+    memset(&client_address, 0, sizeof(struct sockaddr_storage));
+
+    printf("server_name = %s\n", server_name);
+    ret = picoquic_get_server_address(server_name, server_port, &server_address, &is_name);
+    if (sni == NULL && is_name != 0) {
+        sni = server_name;
+    }
+
+    /* Open a low-level UDP socket */
+
+    if (ret == 0) {
+        fd = picoquic_open_client_socket(server_address.ss_family);
+        if (fd == INVALID_SOCKET) {
+            ret = -1;
+        }
+    }
+
+    /* Create QUIC context */
+
+    if (ret == 0) {
+        /* Register `quicdoq_demo_client_cb()` as callback (picoquic_incoming_packet() will call callback if there is valid event)
+         *
+         * TODO: token and ticket files! */
+        qd_client = quicdoq_create(alpn, NULL, NULL, root_crt, ticket_file, token_file, quicdoq_demo_client_cb, (void*)&client_ctx, NULL);
+
+        if (qd_client == NULL) {
+            ret = -1;
+        }
+        else {
+            qclient = quicdoq_get_quic_ctx(qd_client);
+
+            (void)picoquic_set_default_connection_id_length(qclient, (uint8_t)client_cnx_id_length);
+
+            picoquic_set_mtu_max(qclient, mtu_max);
+
+            picoquic_set_default_congestion_algorithm_by_name(qclient, cc_algo_id);
+
+            if (log_file != NULL) {
+                picoquic_set_textlog(qclient, log_file);
+            }
+
+            if (binlog_dir != NULL) {
+                picoquic_set_binlog(qclient, binlog_dir);
+            }
+
+            if (qlog_dir != NULL) {
+                picoquic_set_qlog(qclient, qlog_dir);
+            }
+
+            picoquic_set_log_level(qclient, use_long_log);
+
+            picoquic_set_key_log_file_from_env(qclient);
+        }
+    }
 
     while (ret == 0) {
         /* do the server loop */
         unsigned char received_ecn;
-        int bytes_recv;
         uint64_t delta_t = 0;
         uint64_t current_time = picoquic_current_time();
         uint64_t next_time = picoquic_get_next_wake_time(quicdoq_get_quic_ctx(qd_server), current_time);
-
-        if (quicdoq_next_udp_time(udp_ctx) < next_time) {
-            next_time = quicdoq_next_udp_time(udp_ctx);
-        }
 
         if (next_time > current_time) {
             delta_t = next_time - current_time;
@@ -813,105 +891,97 @@ int quicdoq_linear_doq_server(
         if_index_to = 0;
         
         bytes_recv = picoquic_select(server_sockets.s_socket, PICOQUIC_NB_SERVER_SOCKETS,
-                &addr_from,
-                &addr_to, &if_index_to, &received_ecn,
-                buffer, sizeof(buffer),
-                (int64_t)delta_t, &current_time);
+            &packet_from,
+            &packet_to, &if_index_to, &received_ecn,
+            recv_buffer, sizeof(recv_buffer),
+            (int64_t)delta_t, &current_time);
+        fprintf(stderr, "bytes_recv = %d\n", bytes_recv);
 
         if (bytes_recv < 0) {
             ret = -1;
         }
         else {
-            uint64_t loop_time;
-
-            size_t send_length = 0;
-
             if (bytes_recv > 0) {
-                if (picoquic_compare_addr((struct sockaddr*) & addr_from, (struct sockaddr*) & udp_addr) == 0) {
-                    /* This is a packet from the UDP server. Send it there */
-                    quicdoq_udp_incoming_packet(udp_ctx, buffer, (uint32_t)bytes_recv, (struct sockaddr*) & addr_to, if_index_to, current_time);
-                }
-                else {
-                    /* Submit the packet to the Quic server */
-                    (void)picoquic_incoming_packet(quicdoq_get_quic_ctx(qd_server), buffer,
-                        (size_t)bytes_recv, (struct sockaddr*) & addr_from,
-                        (struct sockaddr*) & addr_to, if_index_to, received_ecn,
-                        current_time);
+                /* Submit the packet to the Quic server */
+                (void)picoquic_incoming_packet(quicdoq_get_quic_ctx(qd_server), recv_buffer,
+                    (size_t)bytes_recv, (struct sockaddr*) &packet_from,
+                    (struct sockaddr*) &packet_to, if_index_to, received_ecn,
+                    current_time);
+            }
+
+            int x_if_index_to;
+
+            /* Prepare QUIC packet to be sent via low-level UDP functions */
+            ret = picoquic_prepare_next_packet(qclient, current_time,
+                recv_buffer, PICOQUIC_MAX_PACKET_SIZE, &send_length,
+                &server_address, &packet_to, &x_if_index_to, NULL, NULL);
+            fprintf(stderr, "send_length = %lu\n", send_length);
+
+            if (ret == 0 && send_length > 0) {
+                /* Send QUIC packet via low-level UDP functions */
+                bytes_sent = sendto(fd, (const char*)recv_buffer, (int)send_length, 0,
+                    (struct sockaddr*) &packet_to, picoquic_addr_length((struct sockaddr*) &packet_to));
+                fprintf(stderr, "bytes_sent = %ld\n", bytes_sent);
+
+                if (bytes_sent <= 0)
+                {
+                    fprintf(stdout, "Cannot send packet to server, returns %ld\n", bytes_sent);
+
+                    if (F_log != stdout && F_log != stderr && F_log != NULL)
+                    {
+                        fprintf(F_log, "Cannot send packet to server, returns %ld\n", bytes_sent);
+                    }
                 }
             }
 
-            do {
-                struct sockaddr_storage peer_addr;
-                struct sockaddr_storage local_addr;
-                picoquic_cnx_t *last_cnx = NULL;
-                picoquic_connection_id_t log_cid = { 0 };
-                int if_index = dest_if;
+            if (current_time > time_out) {
+                printf("Giving up after 60 seconds.\n");
+                break;
+            }
+            else {
+                delay_max = time_out - current_time;
+            }
 
-                loop_time = picoquic_current_time();
-
-                send_length = 0;
-
-                if (quicdoq_next_udp_time(udp_ctx) <= current_time) {
-                    /* check whether there is something to send */
-                    quicdoq_udp_prepare_next_packet(udp_ctx, loop_time,
-                        send_buffer, sizeof(send_buffer), &send_length,
-                        &peer_addr, &local_addr, &if_index);
-                }
-
-                if (send_length == 0 && picoquic_get_next_wake_time(quicdoq_get_quic_ctx(qd_server), current_time) <= current_time) {
-                    ret = picoquic_prepare_next_packet(quicdoq_get_quic_ctx(qd_server), loop_time,
-                        send_buffer, sizeof(send_buffer), &send_length,
-                        &peer_addr, &local_addr, &if_index, &log_cid, &last_cnx);
-                }
-
-                if (ret == 0 && send_length > 0) {
-                    int sock_err = 0;
-                    int sock_ret = picoquic_send_through_server_sockets(&server_sockets,
-                        (struct sockaddr*) & peer_addr,(struct sockaddr*) & local_addr, if_index,
-                        (const char*)send_buffer, (int)send_length, &sock_err);
-                    if (sock_ret <= 0) {
-                        if (last_cnx == NULL) {
-                            picoquic_log_context_free_app_message(quicdoq_get_quic_ctx(qd_server), &log_cid, "Could not send message to AF_to=%d, AF_from=%d, if=%d, ret=%d, err=%d",
-                                peer_addr.ss_family, local_addr.ss_family, if_index, sock_ret, sock_err);
-                        }
-                        else {
-                            picoquic_log_app_message(last_cnx, "Could not send message to AF_to=%d, AF_from=%d, if=%d, ret=%d, err=%d",
-                                peer_addr.ss_family, local_addr.ss_family, if_index, sock_ret, sock_err);
-
-                            if (picoquic_socket_error_implies_unreachable(sock_err)) {
-                                picoquic_notify_destination_unreachable(last_cnx, current_time,
-                                    (struct sockaddr*) & peer_addr, (struct sockaddr*) & local_addr, if_index,
-                                    sock_err);
-                            }
-                        }
-                    }
-                }
-
-            } while (ret == 0 && send_length > 0);
+            delta_t = picoquic_get_next_wake_delay(qclient, current_time, delay_max);
         }
     }
 
-    printf("Server exit, ret = %d\n", ret);
+    /* Client terminated */
+    
+    /* Clean up the client-side server */
 
-    /* Clean up */
     picoquic_close_server_sockets(&server_sockets);
-
-    if (udp_ctx != NULL) {
-        quicdoq_delete_udp_ctx(udp_ctx);
-    }
 
     if (qd_server != NULL) {
         quicdoq_delete(qd_server);
     }
 
+    /* Clean up the client */
+
+    if (qclient != NULL) {
+        if (picoquic_save_session_tickets(qclient, ticket_file) != 0) {
+            printf("Could not save tickets in <%s>\n", ticket_file);
+        }
+        if (picoquic_save_retry_tokens(qclient, token_file)) {
+            printf("Could not save tokens in <%s>\n", token_file);
+        }
+    }
+
+    if (qd_client != NULL) {
+        quicdoq_demo_client_reset_context(qd_client, &client_ctx);
+        quicdoq_delete(qd_client);
+    }
+
+    if (fd != INVALID_SOCKET) {
+        SOCKET_CLOSE(fd);
+    }
+
     if (F_log != NULL) {
-        (void) picoquic_file_close(F_log);
+        picoquic_file_close(F_log);
     }
 
     return ret;
 }
-
-#define QUICDOQ_DEMO_CLIENT_MAX_RECEIVE_BATCH 16
 
 /* Quic Client */
 int quicdoq_client(const char *server_name, int server_port,
@@ -926,17 +996,13 @@ int quicdoq_client(const char *server_name, int server_port,
 {
     char default_server_cert_file[512];
     char default_server_key_file[512];
-    quicdoq_ctx_t * qd_server = NULL;
+    quicdoq_ctx_t *qd_server = NULL;
     picoquic_server_sockets_t server_sockets;
-    // struct sockaddr_storage addr_from;
-    // struct sockaddr_storage addr_to;
-    // uint8_t local_server_recv_buffer[PICOQUIC_MAX_PACKET_SIZE];
-    // uint8_t local_server_send_buffer[PICOQUIC_MAX_PACKET_SIZE];
 
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
-    quicdoq_ctx_t* qd_client = NULL;
-    picoquic_quic_t* qclient = NULL;
+    quicdoq_ctx_t *qd_client = NULL;
+    picoquic_quic_t*qclient = NULL;
     SOCKET_TYPE fd = INVALID_SOCKET;
     struct sockaddr_storage server_address;
     struct sockaddr_storage client_address;
@@ -949,16 +1015,16 @@ int quicdoq_client(const char *server_name, int server_port,
     uint8_t send_buffer[PICOQUIC_MAX_PACKET_SIZE];
     size_t send_length = 0;
     int bytes_recv;
-    int bytes_sent;
+    ssize_t bytes_sent;
     uint64_t current_time = 0;
     uint64_t time_out = 0;
     int64_t delay_max = 10000000;
     int64_t delta_t = 0;
     unsigned char received_ecn;
-    FILE* F_log = NULL;
+    FILE *F_log = NULL;
     quicdoq_demo_client_ctx_t client_ctx;
-    char const* ticket_file = "quicdoq_client_tickets.bin";
-    char const* token_file = "quicdoq_client_tokens.bin";
+    char const *ticket_file = "quicdoq_client_tickets.bin";
+    char const *token_file = "quicdoq_client_tokens.bin";
 
     /* Setup client-side server */
 
@@ -1046,6 +1112,7 @@ int quicdoq_client(const char *server_name, int server_port,
     memset(&client_ctx, 0, sizeof(quicdoq_demo_client_ctx_t));
     memset(&client_address, 0, sizeof(struct sockaddr_storage));
 
+    printf("server_name = %s\n", server_name);
     ret = picoquic_get_server_address(server_name, server_port, &server_address, &is_name);
     if (sni == NULL && is_name != 0) {
         sni = server_name;
@@ -1102,22 +1169,21 @@ int quicdoq_client(const char *server_name, int server_port,
     if (ret == 0) {
         ret = quicdoq_demo_client_init_context(qd_client, &client_ctx, nb_client_queries, client_query_text,
             sni, (struct sockaddr*) & server_address, (struct sockaddr*) & client_address, current_time);
-
     }
 
-    /* Setup fd array for picoquic_select() */
-    int fds[3];
-    fds[0] = fd;
-    fds[1] = server_sockets.s_socket[0];
-    fds[2] = server_sockets.s_socket[1];
-
     /* Loop: Wait until all queries become served */
+    int init = 0;
     while (ret == 0 && !(client_ctx.all_queries_served && quicdoq_is_closed(qd_client))) {
         /* Read from low-level UDP socket */
-        bytes_recv = picoquic_select(fds, 3, &packet_from,
-            &packet_to, &if_index_to, &received_ecn,
-            recv_buffer, sizeof(recv_buffer), delta_t, &current_time);
-        fprintf(stderr, "if_index_to = %d", if_index_to);
+        if (init) {
+            bytes_recv = picoquic_select(&fd, 1, NULL,
+                &packet_to, &if_index_to, &received_ecn,
+                recv_buffer, sizeof(recv_buffer), delta_t, &current_time);
+        } else {
+            bytes_recv = picoquic_select(&fd, 1, &packet_from,
+                &packet_to, &if_index_to, &received_ecn,
+                recv_buffer, sizeof(recv_buffer), delta_t, &current_time);
+        }
         fprintf(stderr, "bytes_recv = %d", bytes_recv);
 
         if (bytes_recv < 0) {
@@ -1131,14 +1197,17 @@ int quicdoq_client(const char *server_name, int server_port,
 
                 /* Submit the packet to the QUIC layer (+ call appropriate callback if there is valid event) */
                 ret = picoquic_incoming_packet(qclient, recv_buffer,
-                    (size_t)bytes_recv, (struct sockaddr*) & packet_from,
+                    (size_t)bytes_recv, (struct sockaddr*) &packet_from,
                     (struct sockaddr*) & packet_to, if_index_to, received_ecn,
                     current_time);
+                fprintf(stderr, "bytes_recv = %d\n", bytes_recv);
                 client_receive_loop++;
                 delta_t = 0;
             }
 
-            /* In normal circumstances, the code waits until all packets in the receive
+            /* Sending process
+             *
+             * In normal circumstances, the code waits until all packets in the receive
              * queue have been processed before sending new packets. However, if the server
              * is sending lots and lots of data this can lead to the client not getting
              * the occasion to send acknowledgements. The server will start retransmissions,
@@ -1149,25 +1218,25 @@ int quicdoq_client(const char *server_name, int server_port,
                 int x_if_index_to;
                 client_receive_loop = 0;
 
-                /* Prepare QUIC packet to be sent via UDP functions */
+                /* Prepare QUIC packet to be sent via low-level UDP functions */
                 ret = picoquic_prepare_next_packet(qclient, current_time,
                     send_buffer, PICOQUIC_MAX_PACKET_SIZE, &send_length,
                     &packet_to, &packet_from, &x_if_index_to, NULL, NULL);
-                fprintf(stderr, "send_length = %lu", send_length);
+                fprintf(stderr, "send_length = %lu\n", send_length);
 
                 if (ret == 0 && send_length > 0) {
-                    /* Send QUIC packet via UDP functions */
+                    /* Send QUIC packet via low-level UDP functions */
                     bytes_sent = sendto(fd, (const char*)send_buffer, (int)send_length, 0,
                         (struct sockaddr*) & packet_to, picoquic_addr_length((struct sockaddr*) & packet_to));
-                    fprintf(stderr, "bytes_sent = %d", bytes_sent);
+                    fprintf(stderr, "bytes_sent = %ld\n", bytes_sent);
 
                     if (bytes_sent <= 0)
                     {
-                        fprintf(stdout, "Cannot send packet to server, returns %d\n", bytes_sent);
+                        fprintf(stdout, "Cannot send packet to server, returns %ld\n", bytes_sent);
 
                         if (F_log != stdout && F_log != stderr && F_log != NULL)
                         {
-                            fprintf(F_log, "Cannot send packet to server, returns %d\n", bytes_sent);
+                            fprintf(F_log, "Cannot send packet to server, returns %ld\n", bytes_sent);
                         }
                     }
                 }
@@ -1187,21 +1256,13 @@ int quicdoq_client(const char *server_name, int server_port,
 
     /* Client terminated */
     
-    /* Clean up the client-side server*/
+    /* Clean up the client-side server */
 
-    // picoquic_close_server_sockets(&server_sockets);
+    picoquic_close_server_sockets(&server_sockets);
 
-    // if (udp_ctx != NULL) {
-    //     quicdoq_delete_udp_ctx(udp_ctx);
-    // }
-
-    // if (qd_server != NULL) {
-    //     quicdoq_delete(qd_server);
-    // }
-
-    // if (F_log != NULL) {
-    //     (void) picoquic_file_close(F_log);
-    // }
+    if (qd_server != NULL) {
+        quicdoq_delete(qd_server);
+    }
 
     /* Clean up the client */
 
@@ -1281,7 +1342,6 @@ int quicdoq_demo_client_init_query(quicdoq_query_ctx_t* query_ctx, char const* c
 }
 
 /* Creation of a client context from a list of text queries */
-
 int quicdoq_demo_client_init_context(quicdoq_ctx_t* qd_client, quicdoq_demo_client_ctx_t * client_ctx, int nb_client_queries, char const** client_query_text,
     char const * server_name, struct sockaddr* server_addr, struct sockaddr* client_addr, uint64_t current_time)
 {
@@ -1361,9 +1421,7 @@ void quicdoq_demo_print_response(quicdoq_query_ctx_t* query_ctx)
     }
 }
 
-/* Client call back and submit function for tests
- */
-
+/* Client call back and submit function for tests */
 int quicdoq_demo_client_cb(
     quicdoq_query_return_enum callback_code,
     void* callback_ctx,
@@ -1412,4 +1470,13 @@ int quicdoq_demo_client_cb(
     }
 
     return ret;
+}
+
+int quicdoq_stub_cb(
+    quicdoq_query_return_enum callback_code,
+    void* callback_ctx,
+    quicdoq_query_ctx_t* query_ctx,
+    uint64_t current_time)
+{
+    return 0;
 }

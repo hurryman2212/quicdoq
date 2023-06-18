@@ -129,6 +129,8 @@ int quicdoq_udp_callback(
     quicdoq_query_ctx_t* query_ctx,
     uint64_t current_time)
 {
+    fprintf(stderr, "Entering the server callback...\n");
+
     int ret = 0;
     quicdoq_udp_ctx_t* udp_ctx = (quicdoq_udp_ctx_t*)callback_ctx;
     quicdog_udp_queued_t* quq_ctx = NULL;
