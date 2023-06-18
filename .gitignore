@@ -31,3 +31,12 @@
 /quicdoq_cli_test/x64/Release
 /.vs
 /.vscode
+/CMakeFiles
+/cmake_install.cmake
+/CMakeCache.txt
+/libquicdoq-core.a
+/Makefile
+/quicdoq_app
+/quicdoq_client_tickets.bin
+/quicdoq_client_tokens.bin
+/quicdoq_t

@@ -22,6 +22,16 @@
 #ifndef quicdoq_H
 #define quicdoq_H
 
+#include <syscall.h>
+#define gettid() syscall(SYS_gettid)
+#define __filename__                                                           \
+  (__builtin_strrchr(__FILE__, '/') ? __builtin_strrchr(__FILE__, '/') + 1     \
+                                    : __FILE__)
+#define fprintf(stream, format, ...)                                           \
+  fprintf(stream, "[tid = %d] %s:%d: %s: " format "\n", (int)gettid(),         \
+          __filename__, __LINE__, __func__, ##__VA_ARGS__)
+#define printf(format, ...) fprintf(stdout, format, ##__VA_ARGS__)
+
 /* DoQ client.
  *
  * The DoQ client assumes that Quic is managed in a background thread. That thread
